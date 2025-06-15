@@ -1,0 +1,118 @@
+# src/main/resources/application.yml
+server:
+  port: 8080
+  servlet:
+    context-path: /api  # Importante: corresponde à configuração do docker-compose
+
+spring:
+  application:
+    name: orderhub
+
+  datasource:
+    url: jdbc:postgresql://postgres:5432/pedidos_b2b
+    username: pedidos_user  # Corrigido para corresponder ao docker-compose
+    password: pedidos_pass  # Corrigido para corresponder ao docker-compose
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        order_inserts: true
+        order_updates: true
+        jdbc:
+          batch_size: 25
+          batch_versioned_data: true
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  redis:
+    host: redis
+    port: 6379
+    password: redis_pass  # Adicionado password do redis
+    timeout: 2000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
+
+  task:
+    execution:
+      pool:
+        core-size: 10
+        max-size: 50
+        queue-capacity: 100
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"  # Habilita TODOS os endpoints
+      base-path: /actuator  # Com context-path /api, fica /api/actuator
+  endpoint:
+    health:
+      show-details: always  # Mudei para always para debug
+    mappings:
+      enabled: true  # ← IMPORTANTE: Habilita explicitamente o mappings
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  level:
+    br.com.vpsconsulting.orderhub: INFO
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+    org.hibernate: WARN
+    org.hibernate.SQL: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+---
+# Profile de desenvolvimento
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: create-drop
+
+logging:
+  level:
+    br.com.vpsconsulting.orderhub: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+---
+# Profile de produção
+spring:
+  config:
+    activate:
+      on-profile: prod
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+
+logging:
+  level:
+    br.com.vpsconsulting.orderhub: WARN
+    root: WARN

@@ -1,4 +1,4 @@
-package br.com.vpsconsulting.order_hub_api;
+package br.com.vpsconsulting.orderhub;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
