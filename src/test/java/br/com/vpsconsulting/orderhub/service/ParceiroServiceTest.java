@@ -3,7 +3,6 @@ package br.com.vpsconsulting.orderhub.service;
 import br.com.vpsconsulting.orderhub.dto.parceiros.CriarParceiroDTO;
 import br.com.vpsconsulting.orderhub.dto.parceiros.ParceiroResponseDTO;
 import br.com.vpsconsulting.orderhub.entity.Parceiro;
-import br.com.vpsconsulting.orderhub.exception.BusinessRuleException;
 import br.com.vpsconsulting.orderhub.exception.EntityNotFoundException;
 import br.com.vpsconsulting.orderhub.repository.ParceiroRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +20,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -74,116 +72,6 @@ class ParceiroServiceTest {
 
         assertTrue(exception.getMessage().contains(publicId));
         verify(parceiroRepository).findByPublicId(publicId);
-    }
-
-    @Test
-    @DisplayName("Deve verificar se parceiro tem crédito suficiente")
-    void deveVerificarSeParceiroTemCreditoSuficiente() {
-        // Given
-        BigDecimal valor = new BigDecimal("5000.00");
-        // O parceiro já foi criado com limite de 10000.00 no setUp, então tem crédito suficiente
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-
-        // When
-        boolean temCredito = parceiroService.temCreditoSuficiente(publicId, valor);
-
-        // Then
-        assertTrue(temCredito);
-        verify(parceiroRepository).findByPublicId(publicId);
-    }
-
-    @Test
-    @DisplayName("Deve retornar false quando parceiro não tem crédito suficiente")
-    void deveRetornarFalseQuandoParceiroNaoTemCreditoSuficiente() {
-        // Given
-        BigDecimal valor = new BigDecimal("15000.00");
-        // O parceiro tem limite de 10000.00, então não tem crédito suficiente para 15000.00
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-
-        // When
-        boolean temCredito = parceiroService.temCreditoSuficiente(publicId, valor);
-
-        // Then
-        assertFalse(temCredito);
-        verify(parceiroRepository).findByPublicId(publicId);
-    }
-
-    @Test
-    @DisplayName("Deve lançar exceção quando parceiro inativo ao verificar crédito")
-    void deveLancarExcecaoQuandoParceiroInativoAoVerificarCredito() {
-        // Given
-        BigDecimal valor = new BigDecimal("5000.00");
-        parceiro.setAtivo(false);
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-
-        // When & Then
-        BusinessRuleException exception = assertThrows(
-                BusinessRuleException.class,
-                () -> parceiroService.temCreditoSuficiente(publicId, valor)
-        );
-
-        assertTrue(exception.getMessage().contains("inativo"));
-        verify(parceiroRepository).findByPublicId(publicId);
-    }
-
-    @Test
-    @DisplayName("Deve debitar crédito do parceiro com sucesso")
-    void deveDebitarCreditoDoParceiroComSucesso() {
-        // Given
-        BigDecimal valor = new BigDecimal("3000.00");
-        BigDecimal creditoAnterior = parceiro.getCreditoDisponivel();
-
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-        when(parceiroRepository.save(any(Parceiro.class))).thenReturn(parceiro);
-
-        // When
-        parceiroService.debitarCredito(publicId, valor);
-
-        // Then
-        verify(parceiroRepository).findByPublicId(publicId);
-        verify(parceiroRepository).save(parceiro);
-        // Verifica se o método utilizarCredito foi chamado através da mudança no saldo
-        assertEquals(creditoAnterior.subtract(valor), parceiro.getCreditoDisponivel());
-    }
-
-    @Test
-    @DisplayName("Deve lançar exceção ao debitar crédito de parceiro inativo")
-    void deveLancarExcecaoAoDebitarCreditoDeParceiroInativo() {
-        // Given
-        BigDecimal valor = new BigDecimal("3000.00");
-        parceiro.setAtivo(false);
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-
-        // When & Then
-        BusinessRuleException exception = assertThrows(
-                BusinessRuleException.class,
-                () -> parceiroService.debitarCredito(publicId, valor)
-        );
-
-        assertTrue(exception.getMessage().contains("inativo"));
-        verify(parceiroRepository).findByPublicId(publicId);
-        verify(parceiroRepository, never()).save(any());
-    }
-
-    @Test
-    @DisplayName("Deve liberar crédito do parceiro com sucesso")
-    void deveLiberarCreditoDoParceiroComSucesso() {
-        // Given
-        BigDecimal valor = new BigDecimal("2000.00");
-        // Primeiro vamos usar parte do crédito para simular um cenário realista
-        parceiro.utilizarCredito(new BigDecimal("5000.00"));
-        BigDecimal creditoAntes = parceiro.getCreditoDisponivel();
-
-        when(parceiroRepository.findByPublicId(publicId)).thenReturn(Optional.of(parceiro));
-        when(parceiroRepository.save(any(Parceiro.class))).thenReturn(parceiro);
-
-        // When
-        parceiroService.liberarCredito(publicId, valor);
-
-        // Then
-        verify(parceiroRepository).findByPublicId(publicId);
-        verify(parceiroRepository).save(parceiro);
-        assertEquals(creditoAntes.add(valor), parceiro.getCreditoDisponivel());
     }
 
     @Test

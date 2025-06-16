@@ -1,4 +1,3 @@
-// src/main/java/br/com/vpsconsulting/orderhub/service/PedidoService.java
 package br.com.vpsconsulting.orderhub.service;
 
 import br.com.vpsconsulting.orderhub.dto.pedidos.AtualizarStatusDTO;
@@ -13,6 +12,7 @@ import br.com.vpsconsulting.orderhub.enums.StatusPedido;
 import br.com.vpsconsulting.orderhub.exception.BusinessRuleException;
 import br.com.vpsconsulting.orderhub.exception.EntityNotFoundException;
 import br.com.vpsconsulting.orderhub.repository.PedidoRepository;
+import br.com.vpsconsulting.orderhub.repository.ParceiroRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,14 +29,21 @@ import java.util.stream.Collectors;
 public class PedidoService {
 
     private final PedidoRepository pedidoRepository;
+    private final ParceiroRepository parceiroRepository;
     private final ParceiroService parceiroService;
     private final NotificacaoService notificacaoService;
 
     public PedidoResponseDTO criarPedido(CriarPedidoDTO dto) {
         log.info("Criando pedido para parceiro: {}", dto.parceiroPublicId());
 
-        // Buscar parceiro
-        Parceiro parceiro = parceiroService.buscarPorPublicId(dto.parceiroPublicId());
+        // OPERAÇÃO ATÔMICA: buscar parceiro com lock para operação de crédito
+        Parceiro parceiro = parceiroRepository.findByPublicIdWithLock(dto.parceiroPublicId())
+                .orElseThrow(() -> EntityNotFoundException.parceiro(dto.parceiroPublicId()));
+
+        // Verificar se parceiro está ativo
+        if (!parceiro.getAtivo()) {
+            throw BusinessRuleException.parceiroInativo(dto.parceiroPublicId());
+        }
 
         // Criar pedido
         Pedido pedido = new Pedido(parceiro);
@@ -56,18 +63,26 @@ public class PedidoService {
         // Calcular valor total
         pedido.calcularValorTotal();
 
-        // Verificar se parceiro tem crédito suficiente
-        if (!parceiroService.temCreditoSuficiente(dto.parceiroPublicId(), pedido.getValorTotal())) {
+        // VERIFICAÇÃO E DÉBITO ATÔMICOS (com o parceiro já locked)
+        if (!parceiro.temCreditoDisponivel(pedido.getValorTotal())) {
             throw BusinessRuleException.creditoInsuficiente(
                     parceiro.getCreditoDisponivel(),
                     pedido.getValorTotal()
             );
         }
 
+        // Debitar crédito imediatamente (operação atômica)
+        parceiro.utilizarCredito(pedido.getValorTotal());
+        parceiroRepository.save(parceiro);
+
+        // Definir pedido como APROVADO já que o crédito foi debitado
+        pedido.atualizarStatus(StatusPedido.APROVADO);
+
         // Salvar pedido
         pedido = pedidoRepository.save(pedido);
 
-        log.info("Pedido criado com sucesso. PublicId: {}", pedido.getPublicId());
+        log.info("Pedido criado e aprovado com sucesso. PublicId: {} - Crédito restante: {}",
+                pedido.getPublicId(), parceiro.getCreditoDisponivel());
 
         return convertToResponseDTO(pedido);
     }
@@ -100,7 +115,7 @@ public class PedidoService {
                 .collect(Collectors.toList());
     }
 
-    public PedidoResponseDTO aprovarStatus(String publicId, AtualizarStatusDTO dto) {
+    public PedidoResponseDTO atualizarStatus(String publicId, AtualizarStatusDTO dto) {
         log.info("Atualizando status do pedido {} para {}", publicId, dto.status());
 
         Pedido pedido = pedidoRepository.findByPublicId(publicId)
@@ -108,12 +123,55 @@ public class PedidoService {
 
         StatusPedido statusAnterior = pedido.getStatus();
 
-        // Ao aprovar um pedido, debitar o valor do crédito do parceiro
-        if (dto.status() == StatusPedido.APROVADO && statusAnterior == StatusPedido.PENDENTE) {
-            parceiroService.debitarCredito(pedido.getParceiro().getPublicId(), pedido.getValorTotal());
+        // Para mudanças que não envolvem crédito, não precisa de lock
+        if (dto.status() != StatusPedido.APROVADO && dto.status() != StatusPedido.CANCELADO) {
+            // Atualizar status simples (EM_PROCESSAMENTO, ENVIADO, ENTREGUE)
+            pedido.atualizarStatus(dto.status());
+            pedido = pedidoRepository.save(pedido);
+        } else {
+            // Para operações que envolvem crédito, usar lock
+            return atualizarStatusComCredito(publicId, dto, statusAnterior);
         }
 
-        // Atualizar status
+        // Notificação para mudanças de status
+        notificacaoService.notificarMudancaStatus(pedido, statusAnterior, dto.status());
+
+        return convertToResponseDTO(pedido);
+    }
+
+    private PedidoResponseDTO atualizarStatusComCredito(String publicId, AtualizarStatusDTO dto, StatusPedido statusAnterior) {
+        // Buscar pedido novamente dentro da transação com operações de crédito
+        Pedido pedido = pedidoRepository.findByPublicId(publicId)
+                .orElseThrow(() -> EntityNotFoundException.pedido(publicId));
+
+        // Extrair publicId do parceiro para usar na lambda
+        String parceiroPublicId = pedido.getParceiro().getPublicId();
+
+        // Buscar parceiro com lock para operações de crédito
+        Parceiro parceiro = parceiroRepository.findByPublicIdWithLock(parceiroPublicId)
+                .orElseThrow(() -> EntityNotFoundException.parceiro(parceiroPublicId));
+
+        // Aprovar pedido pendente
+        if (dto.status() == StatusPedido.APROVADO && statusAnterior == StatusPedido.PENDENTE) {
+            // Verificar crédito e debitar
+            if (!parceiro.temCreditoDisponivel(pedido.getValorTotal())) {
+                throw BusinessRuleException.creditoInsuficiente(
+                        parceiro.getCreditoDisponivel(),
+                        pedido.getValorTotal()
+                );
+            }
+            parceiro.utilizarCredito(pedido.getValorTotal());
+            parceiroRepository.save(parceiro);
+        }
+
+        // Cancelar pedido aprovado
+        if (dto.status() == StatusPedido.CANCELADO && statusAnterior == StatusPedido.APROVADO) {
+            // Liberar crédito
+            parceiro.liberarCredito(pedido.getValorTotal());
+            parceiroRepository.save(parceiro);
+        }
+
+        // Atualizar status do pedido
         pedido.atualizarStatus(dto.status());
         pedido = pedidoRepository.save(pedido);
 
@@ -131,9 +189,21 @@ public class PedidoService {
 
         StatusPedido statusAnterior = pedido.getStatus();
 
-        // Liberar crédito se pedido foi aprovado
+        // Se pedido foi aprovado, precisa liberar crédito (usar lock)
         if (statusAnterior == StatusPedido.APROVADO) {
-            parceiroService.liberarCredito(pedido.getParceiro().getPublicId(), pedido.getValorTotal());
+            // Extrair publicId do parceiro para usar na lambda
+            String parceiroPublicId = pedido.getParceiro().getPublicId();
+
+            // Buscar parceiro com lock para operação de crédito
+            Parceiro parceiro = parceiroRepository.findByPublicIdWithLock(parceiroPublicId)
+                    .orElseThrow(() -> EntityNotFoundException.parceiro(parceiroPublicId));
+
+            // Liberar crédito
+            parceiro.liberarCredito(pedido.getValorTotal());
+            parceiroRepository.save(parceiro);
+
+            log.info("Crédito liberado no cancelamento - Parceiro: {} - Valor: {} - Crédito disponível: {}",
+                    parceiro.getPublicId(), pedido.getValorTotal(), parceiro.getCreditoDisponivel());
         }
 
         // Cancelar pedido

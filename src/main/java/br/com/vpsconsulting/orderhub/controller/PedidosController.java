@@ -1,4 +1,3 @@
-// src/main/java/br/com/vpsconsulting/orderhub/controller/PedidosController.java
 package br.com.vpsconsulting.orderhub.controller;
 
 import br.com.vpsconsulting.orderhub.dto.pedidos.AtualizarStatusDTO;
@@ -30,7 +29,7 @@ public class PedidosController {
     private final PedidoService pedidoService;
 
     @PostMapping
-    @Operation(summary = "Cadastro de pedidos", description = "Cria um novo pedido para um parceiro")
+    @Operation(summary = "Cadastro de pedidos", description = "Cria um novo pedido para um parceiro e aprova automaticamente se há crédito suficiente")
     public ResponseEntity<PedidoResponseDTO> criarPedido(@Valid @RequestBody CriarPedidoDTO dto) {
         log.info("Criando pedido para parceiro: {}", dto.parceiroPublicId());
 
@@ -81,21 +80,21 @@ public class PedidosController {
         return ResponseEntity.ok(pedidos);
     }
 
-    @PutMapping("/{publicId}/aprovar")
-    @Operation(summary = "Atualização de status de pedidos", description = "Atualiza o status de um pedido")
+    @PutMapping("/{publicId}/status")
+    @Operation(summary = "Atualização de status de pedidos", description = "Atualiza o status de um pedido (APROVADO, EM_PROCESSAMENTO, ENVIADO, ENTREGUE, CANCELADO)")
     public ResponseEntity<PedidoResponseDTO> atualizarStatus(
             @Parameter(description = "ID do pedido") @PathVariable String publicId,
             @Valid @RequestBody AtualizarStatusDTO dto) {
 
         log.info("Atualizando status do pedido {} para {}", publicId, dto.status());
 
-        PedidoResponseDTO pedido = pedidoService.aprovarStatus(publicId, dto);
+        PedidoResponseDTO pedido = pedidoService.atualizarStatus(publicId, dto);
 
         return ResponseEntity.ok(pedido);
     }
 
     @PutMapping("/{publicId}/cancelar")
-    @Operation(summary = "Cancelamento de pedidos", description = "Cancela um pedido")
+    @Operation(summary = "Cancelamento de pedidos", description = "Cancela um pedido e libera crédito se necessário")
     public ResponseEntity<PedidoResponseDTO> cancelarPedido(
             @Parameter(description = "ID do pedido") @PathVariable String publicId) {
 

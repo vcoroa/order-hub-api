@@ -133,8 +133,8 @@ class ParceiroControllerTest {
 
         // When & Then
         mockMvc.perform(get("/parceiros/{publicId}", publicId))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.codigo").value("ENTITY_NOT_FOUND"))
+                .andExpect(status().isNotFound())              // ← andExpect (sem "ed")
+                .andExpect(jsonPath("$.erro").value("ENTITY_NOT_FOUND"))
                 .andExpect(jsonPath("$.mensagem").exists());
     }
 

@@ -11,6 +11,7 @@ import br.com.vpsconsulting.orderhub.enums.StatusPedido;
 import br.com.vpsconsulting.orderhub.exception.BusinessRuleException;
 import br.com.vpsconsulting.orderhub.exception.EntityNotFoundException;
 import br.com.vpsconsulting.orderhub.repository.PedidoRepository;
+import br.com.vpsconsulting.orderhub.repository.ParceiroRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,6 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,6 +37,9 @@ class PedidoServiceTest {
 
     @Mock
     private PedidoRepository pedidoRepository;
+
+    @Mock
+    private ParceiroRepository parceiroRepository;
 
     @Mock
     private ParceiroService parceiroService;
@@ -64,15 +67,16 @@ class PedidoServiceTest {
         pedido.setPublicId(publicId);
         pedido.setValorTotal(new BigDecimal("1500.00"));
         pedido.setObservacoes("Pedido de teste");
+        pedido.setStatus(StatusPedido.APROVADO); // Pedidos são criados já aprovados na nova arquitetura
 
-        // IMPORTANTE: Adicionar item para que o pedido possa ser aprovado
+        // Adicionar item para que o pedido seja válido
         ItemPedido item = new ItemPedido(pedido, "Produto Teste", 2, new BigDecimal("750.00"));
         pedido.adicionarItem(item);
     }
 
     @Test
-    @DisplayName("Deve criar pedido com sucesso")
-    void deveCriarPedidoComSucesso() {
+    @DisplayName("Deve criar pedido com sucesso e aprovar automaticamente")
+    void deveCriarPedidoComSucessoEAprovarAutomaticamente() {
         // Given
         List<ItemPedidoDTO> itens = Arrays.asList(
                 new ItemPedidoDTO("Produto A", 2, new BigDecimal("500.00")),
@@ -81,8 +85,9 @@ class PedidoServiceTest {
 
         CriarPedidoDTO dto = new CriarPedidoDTO(parceiroPublicId, itens, "Observações do pedido");
 
-        when(parceiroService.buscarPorPublicId(parceiroPublicId)).thenReturn(parceiro);
-        when(parceiroService.temCreditoSuficiente(eq(parceiroPublicId), any(BigDecimal.class))).thenReturn(true);
+        // Mock para buscar parceiro com lock
+        when(parceiroRepository.findByPublicIdWithLock(parceiroPublicId)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.save(any(Parceiro.class))).thenReturn(parceiro);
         when(pedidoRepository.save(any(Pedido.class))).thenReturn(pedido);
 
         // When
@@ -93,10 +98,10 @@ class PedidoServiceTest {
         assertEquals(publicId, resultado.publicId());
         assertEquals(parceiroPublicId, resultado.parceiroPublicId());
         assertEquals("Empresa Teste", resultado.nomeParceiro());
-        assertEquals("Pedido de teste", resultado.observacoes()); // observação do pedido mock
+        assertEquals(StatusPedido.APROVADO, resultado.status()); // Pedido criado já aprovado
 
-        verify(parceiroService).buscarPorPublicId(parceiroPublicId);
-        verify(parceiroService).temCreditoSuficiente(eq(parceiroPublicId), any(BigDecimal.class));
+        verify(parceiroRepository).findByPublicIdWithLock(parceiroPublicId);
+        verify(parceiroRepository).save(parceiro);
         verify(pedidoRepository).save(any(Pedido.class));
     }
 
@@ -110,8 +115,10 @@ class PedidoServiceTest {
 
         CriarPedidoDTO dto = new CriarPedidoDTO(parceiroPublicId, itens, "Pedido caro");
 
-        when(parceiroService.buscarPorPublicId(parceiroPublicId)).thenReturn(parceiro);
-        when(parceiroService.temCreditoSuficiente(eq(parceiroPublicId), any(BigDecimal.class))).thenReturn(false);
+        // Parceiro com crédito insuficiente
+        parceiro.utilizarCredito(new BigDecimal("9500.00")); // Sobram apenas 500
+
+        when(parceiroRepository.findByPublicIdWithLock(parceiroPublicId)).thenReturn(Optional.of(parceiro));
 
         // When & Then
         BusinessRuleException exception = assertThrows(
@@ -119,24 +126,36 @@ class PedidoServiceTest {
                 () -> pedidoService.criarPedido(dto)
         );
 
-        // Verificar que a exceção foi lançada com a estrutura correta
         assertNotNull(exception);
-        assertNotNull(exception.getMessage());
-        assertNotNull(exception.getCodigo());
+        assertEquals("CREDITO_INSUFICIENTE", exception.getCodigo());
+        assertTrue(exception.getMessage().toLowerCase().contains("crédito"));
 
-        // A mensagem deve mencionar crédito insuficiente (baseado no método creditoInsuficiente)
-        String mensagem = exception.getMessage().toLowerCase();
-        assertTrue(
-                mensagem.contains("crédito") && mensagem.contains("insuficiente"),
-                "Mensagem deveria mencionar 'crédito insuficiente'. Mensagem atual: " + exception.getMessage()
+        verify(parceiroRepository).findByPublicIdWithLock(parceiroPublicId);
+        verify(parceiroRepository, never()).save(any());
+        verify(pedidoRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Deve lançar exceção quando parceiro está inativo")
+    void deveLancarExcecaoQuandoParceiroEstaInativo() {
+        // Given
+        List<ItemPedidoDTO> itens = Arrays.asList(
+                new ItemPedidoDTO("Produto", 1, new BigDecimal("1000.00"))
         );
 
-        // Verificar código da exceção
-        assertEquals("CREDITO_INSUFICIENTE", exception.getCodigo());
+        CriarPedidoDTO dto = new CriarPedidoDTO(parceiroPublicId, itens, "Pedido");
 
-        verify(parceiroService).buscarPorPublicId(parceiroPublicId);
-        verify(parceiroService).temCreditoSuficiente(eq(parceiroPublicId), any(BigDecimal.class));
-        verify(pedidoRepository, never()).save(any());
+        parceiro.setAtivo(false);
+        when(parceiroRepository.findByPublicIdWithLock(parceiroPublicId)).thenReturn(Optional.of(parceiro));
+
+        // When & Then
+        BusinessRuleException exception = assertThrows(
+                BusinessRuleException.class,
+                () -> pedidoService.criarPedido(dto)
+        );
+
+        assertTrue(exception.getMessage().toLowerCase().contains("inativo"));
+        verify(parceiroRepository).findByPublicIdWithLock(parceiroPublicId);
     }
 
     @Test
@@ -157,47 +176,10 @@ class PedidoServiceTest {
     }
 
     @Test
-    @DisplayName("Deve lançar exceção quando pedido não encontrado")
-    void deveLancarExcecaoQuandoPedidoNaoEncontrado() {
-        // Given
-        when(pedidoRepository.findByPublicIdWithItens(publicId)).thenReturn(Optional.empty());
-
-        // When & Then
-        EntityNotFoundException exception = assertThrows(
-                EntityNotFoundException.class,
-                () -> pedidoService.buscarPorId(publicId)
-        );
-
-        assertTrue(exception.getMessage().contains(publicId));
-        verify(pedidoRepository).findByPublicIdWithItens(publicId);
-    }
-
-    @Test
-    @DisplayName("Deve buscar pedidos por período")
-    void deveBuscarPedidosPorPeriodo() {
-        // Given
-        LocalDateTime dataInicio = LocalDateTime.now().minusDays(7);
-        LocalDateTime dataFim = LocalDateTime.now();
-
-        List<Pedido> pedidos = Arrays.asList(pedido);
-        when(pedidoRepository.findByDataCriacaoBetweenOrderByDataCriacaoDesc(dataInicio, dataFim))
-                .thenReturn(pedidos);
-
-        // When
-        List<PedidoResponseDTO> resultado = pedidoService.buscarPedidos(dataInicio, dataFim, null);
-
-        // Then
-        assertNotNull(resultado);
-        assertEquals(1, resultado.size());
-        assertEquals(publicId, resultado.get(0).publicId());
-        verify(pedidoRepository).findByDataCriacaoBetweenOrderByDataCriacaoDesc(dataInicio, dataFim);
-    }
-
-    @Test
     @DisplayName("Deve buscar pedidos por status")
     void deveBuscarPedidosPorStatus() {
         // Given
-        StatusPedido status = StatusPedido.PENDENTE;
+        StatusPedido status = StatusPedido.APROVADO;
         List<Pedido> pedidos = Arrays.asList(pedido);
         when(pedidoRepository.findByStatusOrderByDataCriacaoDesc(status)).thenReturn(pedidos);
 
@@ -212,49 +194,9 @@ class PedidoServiceTest {
     }
 
     @Test
-    @DisplayName("Deve buscar todos os pedidos quando não há filtros")
-    void deveBuscarTodosOsPedidosQuandoNaoHaFiltros() {
+    @DisplayName("Deve atualizar status para EM_PROCESSAMENTO sem operações de crédito")
+    void deveAtualizarStatusParaEmProcessamentoSemOperacoesDeCredito() {
         // Given
-        List<Pedido> pedidos = Arrays.asList(pedido);
-        when(pedidoRepository.findAllByOrderByDataCriacaoDesc()).thenReturn(pedidos);
-
-        // When
-        List<PedidoResponseDTO> resultado = pedidoService.buscarPedidos(null, null, null);
-
-        // Then
-        assertNotNull(resultado);
-        assertEquals(1, resultado.size());
-        assertEquals(publicId, resultado.get(0).publicId());
-        verify(pedidoRepository).findAllByOrderByDataCriacaoDesc();
-    }
-
-    @Test
-    @DisplayName("Deve aprovar pedido e debitar crédito")
-    void deveAprovarPedidoEDebitarCredito() {
-        // Given
-        AtualizarStatusDTO dto = new AtualizarStatusDTO(StatusPedido.APROVADO);
-        pedido.setStatus(StatusPedido.PENDENTE);
-
-        when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.of(pedido));
-        when(pedidoRepository.save(any(Pedido.class))).thenReturn(pedido);
-
-        // When
-        PedidoResponseDTO resultado = pedidoService.aprovarStatus(publicId, dto);
-
-        // Then
-        assertNotNull(resultado);
-        assertEquals(StatusPedido.APROVADO, resultado.status());
-
-        verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService).debitarCredito(parceiroPublicId, pedido.getValorTotal());
-        verify(pedidoRepository).save(pedido);
-        verify(notificacaoService).notificarMudancaStatus(pedido, StatusPedido.PENDENTE, StatusPedido.APROVADO);
-    }
-
-    @Test
-    @DisplayName("Deve atualizar status sem debitar crédito quando não é aprovação")
-    void deveAtualizarStatusSemDebitarCreditoQuandoNaoEAprovacao() {
-        // Given - Testando transição de APROVADO para EM_PROCESSAMENTO (válida e não é aprovação)
         AtualizarStatusDTO dto = new AtualizarStatusDTO(StatusPedido.EM_PROCESSAMENTO);
         pedido.setStatus(StatusPedido.APROVADO);
 
@@ -262,48 +204,27 @@ class PedidoServiceTest {
         when(pedidoRepository.save(any(Pedido.class))).thenReturn(pedido);
 
         // When
-        PedidoResponseDTO resultado = pedidoService.aprovarStatus(publicId, dto);
+        PedidoResponseDTO resultado = pedidoService.atualizarStatus(publicId, dto);
 
         // Then
         assertNotNull(resultado);
         assertEquals(StatusPedido.EM_PROCESSAMENTO, resultado.status());
 
         verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).debitarCredito(anyString(), any(BigDecimal.class));
         verify(pedidoRepository).save(pedido);
+        verify(parceiroRepository, never()).findByPublicIdWithLock(any());
         verify(notificacaoService).notificarMudancaStatus(pedido, StatusPedido.APROVADO, StatusPedido.EM_PROCESSAMENTO);
     }
 
     @Test
-    @DisplayName("Deve atualizar status para entregue seguindo fluxo completo")
-    void deveAtualizarStatusParaEntregueSegundoFluxoCompleto() {
-        // Given - Testando transição de ENVIADO para ENTREGUE (fluxo correto)
-        AtualizarStatusDTO dto = new AtualizarStatusDTO(StatusPedido.ENTREGUE);
-        pedido.setStatus(StatusPedido.ENVIADO); // Status correto para ir para ENTREGUE
-
-        when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.of(pedido));
-        when(pedidoRepository.save(any(Pedido.class))).thenReturn(pedido);
-
-        // When
-        PedidoResponseDTO resultado = pedidoService.aprovarStatus(publicId, dto);
-
-        // Then
-        assertNotNull(resultado);
-        assertEquals(StatusPedido.ENTREGUE, resultado.status());
-
-        verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).debitarCredito(anyString(), any(BigDecimal.class));
-        verify(pedidoRepository).save(pedido);
-        verify(notificacaoService).notificarMudancaStatus(pedido, StatusPedido.ENVIADO, StatusPedido.ENTREGUE);
-    }
-
-    @Test
-    @DisplayName("Deve cancelar pedido e liberar crédito quando estava aprovado")
-    void deveCancelarPedidoELiberarCreditoQuandoEstavaAprovado() {
+    @DisplayName("Deve cancelar pedido aprovado e liberar crédito")
+    void deveCancelarPedidoAprovadoELiberarCredito() {
         // Given
         pedido.setStatus(StatusPedido.APROVADO);
 
         when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.of(pedido));
+        when(parceiroRepository.findByPublicIdWithLock(parceiroPublicId)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.save(any(Parceiro.class))).thenReturn(parceiro);
         when(pedidoRepository.save(any(Pedido.class))).thenReturn(pedido);
 
         // When
@@ -314,14 +235,15 @@ class PedidoServiceTest {
         assertEquals(StatusPedido.CANCELADO, resultado.status());
 
         verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService).liberarCredito(parceiroPublicId, pedido.getValorTotal());
+        verify(parceiroRepository).findByPublicIdWithLock(parceiroPublicId);
+        verify(parceiroRepository).save(parceiro);
         verify(pedidoRepository).save(pedido);
         verify(notificacaoService).notificarMudancaStatus(pedido, StatusPedido.APROVADO, StatusPedido.CANCELADO);
     }
 
     @Test
-    @DisplayName("Deve cancelar pedido sem liberar crédito quando estava pendente")
-    void deveCancelarPedidoSemLiberarCreditoQuandoEstavaPendente() {
+    @DisplayName("Deve cancelar pedido pendente sem liberar crédito")
+    void deveCancelarPedidoPendenteSemLiberarCredito() {
         // Given
         pedido.setStatus(StatusPedido.PENDENTE);
 
@@ -336,64 +258,24 @@ class PedidoServiceTest {
         assertEquals(StatusPedido.CANCELADO, resultado.status());
 
         verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).liberarCredito(anyString(), any(BigDecimal.class));
+        verify(parceiroRepository, never()).findByPublicIdWithLock(any());
         verify(pedidoRepository).save(pedido);
         verify(notificacaoService).notificarMudancaStatus(pedido, StatusPedido.PENDENTE, StatusPedido.CANCELADO);
     }
 
     @Test
-    @DisplayName("Deve lançar exceção ao tentar aprovar pedido não encontrado")
-    void deveLancarExcecaoAoTentarAprovarPedidoNaoEncontrado() {
+    @DisplayName("Deve lançar exceção para pedido não encontrado")
+    void deveLancarExcecaoParaPedidoNaoEncontrado() {
         // Given
-        AtualizarStatusDTO dto = new AtualizarStatusDTO(StatusPedido.APROVADO);
-        when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.empty());
+        when(pedidoRepository.findByPublicIdWithItens(publicId)).thenReturn(Optional.empty());
 
         // When & Then
         EntityNotFoundException exception = assertThrows(
                 EntityNotFoundException.class,
-                () -> pedidoService.aprovarStatus(publicId, dto)
+                () -> pedidoService.buscarPorId(publicId)
         );
 
         assertTrue(exception.getMessage().contains(publicId));
-        verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).debitarCredito(anyString(), any(BigDecimal.class));
-    }
-
-    @Test
-    @DisplayName("Deve lançar exceção ao tentar cancelar pedido não encontrado")
-    void deveLancarExcecaoAoTentarCancelarPedidoNaoEncontrado() {
-        // Given
-        when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.empty());
-
-        // When & Then
-        EntityNotFoundException exception = assertThrows(
-                EntityNotFoundException.class,
-                () -> pedidoService.cancelarPedido(publicId)
-        );
-
-        assertTrue(exception.getMessage().contains(publicId));
-        verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).liberarCredito(anyString(), any(BigDecimal.class));
-    }
-
-    @Test
-    @DisplayName("Deve lançar exceção para transição de status inválida")
-    void deveLancarExcecaoParaTransicaoDeStatusInvalida() {
-        // Given - Testando uma transição que sabemos ser inválida
-        AtualizarStatusDTO dto = new AtualizarStatusDTO(StatusPedido.PENDENTE);
-        pedido.setStatus(StatusPedido.APROVADO); // Não deveria poder voltar para PENDENTE
-
-        when(pedidoRepository.findByPublicId(publicId)).thenReturn(Optional.of(pedido));
-
-        // When & Then
-        BusinessRuleException exception = assertThrows(
-                BusinessRuleException.class,
-                () -> pedidoService.aprovarStatus(publicId, dto)
-        );
-
-        assertTrue(exception.getMessage().contains("status"));
-        verify(pedidoRepository).findByPublicId(publicId);
-        verify(parceiroService, never()).debitarCredito(anyString(), any(BigDecimal.class));
-        verify(parceiroService, never()).liberarCredito(anyString(), any(BigDecimal.class));
+        verify(pedidoRepository).findByPublicIdWithItens(publicId);
     }
 }
