@@ -1,88 +1,89 @@
-# src/main/resources/application.yml
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
   servlet:
-    context-path: /api  # Importante: corresponde à configuração do docker-compose
+    context-path: ${SERVER_SERVLET_CONTEXT_PATH:/api}
 
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   application:
-    name: orderhub
+    name: ${SPRING_APPLICATION_NAME:orderhub}
+
+  mvc:
+    throw-exception-if-no-handler-found: ${SPRING_MVC_THROW_EXCEPTION_IF_NO_HANDLER_FOUND:true}
+    web:
+      resources:
+        add-mappings: ${SPRING_WEB_RESOURCES_ADD_MAPPINGS:false}
+
+  # CACHE SIMPLES (in-memory)
+  cache:
+    type: ${SPRING_CACHE_TYPE:simple}
+    cache-names: ${SPRING_CACHE_CACHE_NAMES:dados-parceiros, pedidos, parceiros}
 
   datasource:
-    url: jdbc:postgresql://postgres:5432/pedidos_b2b
-    username: pedidos_user  # Corrigido para corresponder ao docker-compose
-    password: pedidos_pass  # Corrigido para corresponder ao docker-compose
-    driver-class-name: org.postgresql.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/pedidos_b2b}
+    username: ${SPRING_DATASOURCE_USERNAME:pedidos_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:pedidos_pass}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.postgresql.Driver}
     hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:20}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:5}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT:600000}
+      max-lifetime: ${SPRING_DATASOURCE_HIKARI_MAX_LIFETIME:1800000}
 
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: false
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
-        order_inserts: true
-        order_updates: true
+        dialect: ${SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT:org.hibernate.dialect.PostgreSQLDialect}
+        format_sql: ${SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL:true}
+        order_inserts: ${SPRING_JPA_PROPERTIES_HIBERNATE_ORDER_INSERTS:true}
+        order_updates: ${SPRING_JPA_PROPERTIES_HIBERNATE_ORDER_UPDATES:true}
         jdbc:
-          batch_size: 25
-          batch_versioned_data: true
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
-
-  redis:
-    host: redis
-    port: 6379
-    password: redis_pass  # Adicionado password do redis
-    timeout: 2000ms
-    lettuce:
-      pool:
-        max-active: 8
-        max-idle: 8
-        min-idle: 0
+          batch_size: ${SPRING_JPA_PROPERTIES_HIBERNATE_JDBC_BATCH_SIZE:25}
+          batch_versioned_data: ${SPRING_JPA_PROPERTIES_HIBERNATE_JDBC_BATCH_VERSIONED_DATA:true}
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.dialect.PostgreSQLDialect}
 
   task:
     execution:
       pool:
-        core-size: 10
-        max-size: 50
-        queue-capacity: 100
+        core-size: ${SPRING_TASK_EXECUTION_POOL_CORE_SIZE:10}
+        max-size: ${SPRING_TASK_EXECUTION_POOL_MAX_SIZE:50}
+        queue-capacity: ${SPRING_TASK_EXECUTION_POOL_QUEUE_CAPACITY:100}
 
 management:
   endpoints:
     web:
       exposure:
-        include: "*"  # Habilita TODOS os endpoints
-      base-path: /actuator  # Com context-path /api, fica /api/actuator
+        include: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:*}
+      base-path: ${MANAGEMENT_ENDPOINTS_WEB_BASE_PATH:/actuator}
   endpoint:
     health:
-      show-details: always  # Mudei para always para debug
+      show-details: ${MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS:always}
     mappings:
-      enabled: true  # ← IMPORTANTE: Habilita explicitamente o mappings
+      enabled: ${MANAGEMENT_ENDPOINT_MAPPINGS_ENABLED:true}
     metrics:
-      enabled: true
+      enabled: ${MANAGEMENT_ENDPOINT_METRICS_ENABLED:true}
     prometheus:
-      enabled: true
+      enabled: ${MANAGEMENT_ENDPOINT_PROMETHEUS_ENABLED:true}
   metrics:
     export:
       prometheus:
-        enabled: true
+        enabled: ${MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED:true}
 
 logging:
   level:
-    br.com.vpsconsulting.orderhub: INFO
-    org.springframework.web: INFO
-    org.springframework.security: DEBUG
-    org.hibernate: WARN
-    org.hibernate.SQL: INFO
+    br.com.vpsconsulting.orderhub: ${LOGGING_LEVEL_BR_COM_VPSCONSULTING_ORDERHUB:INFO}
+    org.springframework.web: ${LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB:INFO}
+    org.springframework.security: ${LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY:DEBUG}
+    org.hibernate: ${LOGGING_LEVEL_ORG_HIBERNATE:WARN}
+    org.hibernate.SQL: ${LOGGING_LEVEL_ORG_HIBERNATE_SQL:INFO}
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: ${LOGGING_PATTERN_CONSOLE:%d{yyyy-MM-dd HH:mm:ss} - %msg%n}
+    file: ${LOGGING_PATTERN_FILE:%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n}
 
 ---
 # Profile de desenvolvimento
@@ -91,28 +92,16 @@ spring:
     activate:
       on-profile: dev
   jpa:
-    show-sql: true
+    show-sql: ${SPRING_JPA_SHOW_SQL_DEV:true}
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO_DEV:create-drop}
+
+  # Cache simples para desenvolvimento
+  cache:
+    type: ${SPRING_CACHE_TYPE_DEV:simple}
 
 logging:
   level:
-    br.com.vpsconsulting.orderhub: DEBUG
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
-
----
-# Profile de produção
-spring:
-  config:
-    activate:
-      on-profile: prod
-  jpa:
-    show-sql: false
-    hibernate:
-      ddl-auto: validate
-
-logging:
-  level:
-    br.com.vpsconsulting.orderhub: WARN
-    root: WARN
+    br.com.vpsconsulting.orderhub: ${LOGGING_LEVEL_BR_COM_VPSCONSULTING_ORDERHUB_DEV:DEBUG}
+    org.hibernate.SQL: ${LOGGING_LEVEL_ORG_HIBERNATE_SQL_DEV:DEBUG}
+    org.hibernate.type.descriptor.sql.BasicBinder: ${LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER_DEV:TRACE}

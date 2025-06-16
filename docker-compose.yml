@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # Banco de dados PostgreSQL
   postgres:
@@ -12,30 +14,10 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - pedidos-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pedidos_user -d pedidos_b2b"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  # Redis para cache e sessões
-  redis:
-    image: redis:7-alpine
-    container_name: pedidos-redis
-    command: redis-server --appendonly yes --requirepass redis_pass
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - pedidos-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -59,12 +41,6 @@ services:
       SPRING_JPA_SHOW_SQL: false
       SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
       SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL: true
-
-      # Redis
-      SPRING_REDIS_HOST: redis
-      SPRING_REDIS_PORT: 6379
-      SPRING_REDIS_PASSWORD: redis_pass
-      SPRING_REDIS_TIMEOUT: 2000ms
 
       # Server
       SERVER_PORT: 8080
@@ -101,8 +77,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - pedidos-network
     volumes:
@@ -117,41 +91,26 @@ services:
           memory: 512M
           cpus: '0.5'
 
-  # Nginx como load balancer (opcional para múltiplas instâncias)
-  nginx:
-    image: nginx:alpine
-    container_name: pedidos-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-    depends_on:
-      - app
-    networks:
-      - pedidos-network
-    restart: unless-stopped
-
-  # Prometheus para métricas (opcional)
+  # Prometheus para métricas
   prometheus:
     image: prom/prometheus:latest
     container_name: pedidos-prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - pedidos-network
+    restart: unless-stopped
+    # Configuração prometheus inline
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    networks:
-      - pedidos-network
-    restart: unless-stopped
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
 
-  # pgAdmin para administração do banco (opcional)
+  # pgAdmin para administração do banco
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: pedidos-pgadmin
@@ -179,11 +138,19 @@ networks:
 volumes:
   postgres_data:
     driver: local
-  redis_data:
-    driver: local
   app_logs:
-    driver: local
-  prometheus_data:
     driver: local
   pgadmin_data:
     driver: local
+
+# Configuração do Prometheus
+configs:
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: 'spring-actuator'
+          metrics_path: '/api/actuator/prometheus'
+          static_configs:
+            - targets: ['app:8080']
