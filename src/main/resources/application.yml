@@ -63,6 +63,7 @@ management:
   endpoint:
     health:
       show-details: ${MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS:always}
+      show-components: ${MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS:always}
     mappings:
       enabled: ${MANAGEMENT_ENDPOINT_MAPPINGS_ENABLED:true}
     metrics:

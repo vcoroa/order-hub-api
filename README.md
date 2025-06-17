@@ -74,9 +74,14 @@ curl http://localhost:8080/api/actuator/health
 {
   "status": "UP",
   "components": {
-    "db": {"status": "UP"},
-    "diskSpace": {"status": "UP"},
-    "ping": {"status": "UP"}
+    "db":
+      {"status": "UP"},
+    "diskSpace":
+      {"status": "UP"},
+    "ping":
+      {"status": "UP"},
+     "ssl":
+      {"status": "UP"}
   }
 }
 ```

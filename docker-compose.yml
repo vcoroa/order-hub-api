@@ -66,6 +66,7 @@ services:
       # Actuator
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,metrics,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: when_authorized
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS: always
 
       # Thread pool para processamento assíncrono
       SPRING_TASK_EXECUTION_POOL_CORE_SIZE: 10
